@@ -11,6 +11,7 @@ import config
 from groq_client import ai_client
 from memory import memory_manager
 from utils import logger, split_message, format_ai_log
+from knowledge_manager import knowledge_manager
 
 # Cấu hình Discord Intents
 intents = discord.Intents.default()
@@ -40,9 +41,24 @@ async def on_ready():
     await bot.change_presence(status=discord.Status.online, activity=activity)
 
 
+@bot.command(name="sync", aliases=["capnhat", "reload"])
+async def sync_data(ctx):
+    """Lệnh ép cập nhật dữ liệu mới nhất từ Google Sheets / Excel."""
+    msg = await ctx.send("🔄 Đang kết nối Tiên Giới tải dữ liệu Google Sheets mới nhất...")
+    success = knowledge_manager.sync_google_sheets(force=True)
+    knowledge_manager.load_data(force_sync=True)
+    if success:
+        await msg.edit(content=f"🟢 **Thành công!** Đã đồng bộ {len(knowledge_manager.records)} dòng dữ liệu mới nhất từ Google Sheets!")
+    else:
+        await msg.edit(content="⚠️ **Lưu ý:** Không thể tải từ Google Sheets, bot đang dùng dữ liệu Excel/CSV lưu sẵn.")
+
+
 @bot.event
 async def on_message(message: discord.Message):
     """Xử lý mọi tin nhắn đến theo các tiêu chí yêu cầu."""
+    # Xử lý lệnh Discord (ví dụ !sync)
+    await bot.process_commands(message)
+
     # 1. Bỏ qua tin nhắn từ chính bot hoặc các bot khác
     if message.author.bot:
         return

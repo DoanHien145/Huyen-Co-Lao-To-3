@@ -6,7 +6,8 @@ Dự án Bot Discord AI phong cách Tu Tiên Tiên Hiệp hoàn chỉnh bằng P
 
 ## 🌟 Chức năng nổi bật
 
-- 🤖 **Phong cách Tu Tiên Tiên Hiệp**: Xưng hô "Bổn Tôn/Đạo hữu", khẩu khí uy nghiêm, trí tuệ.
+- 📊 **Cơ Sở Trí Thức từ Excel / CSV**: Tự động tra cứu dữ liệu từ file `data.xlsx` hoặc `knowledge.csv` để trả lời chính xác khi người dùng đặt câu hỏi.
+- 🤖 **Phong cách Vô Danh Lão Tổ**: Xưng hô "lão phu/tiểu hữu", khẩu khí uy nghiêm, điềm tĩnh, đi thẳng vào trọng tâm tiết kiệm token.
 - ⚡ **Groq SDK Cực Nhanh**: Tốc độ phản hồi cực cao với danh sách model ưu tiên tự động chuyển đổi:
   1. `llama-3.3-70b-versatile`
   2. `openai/gpt-oss-120b`
