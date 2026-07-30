@@ -60,8 +60,8 @@ class GroqAIClient:
                     response = await self.client.chat.completions.create(
                         model=model,
                         messages=full_messages,
-                        temperature=0.7,
-                        max_tokens=2048,
+                        temperature=0.6,
+                        max_tokens=getattr(config, "MAX_TOKENS", 512),
                         top_p=0.9
                     )
 
