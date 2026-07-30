@@ -5,6 +5,7 @@ Giúp Bot tự động cập nhật dữ liệu từ Google Sheets / Excel để
 
 import os
 import csv
+import re
 import time
 import urllib.request
 from typing import List, Dict, Any
@@ -17,8 +18,25 @@ try:
 except ImportError:
     HAS_OPENPYXL = False
 
-GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1qGL7A7PB0PdJAzaAWGiPECn9eCFWwXWkFsiYD-WHjE4/export?format=csv&gid=1383258709"
+# Cấu hình Google Sheets URL (Hỗ trợ link chia sẻ/edit từ người dùng)
+GOOGLE_SHEET_SHARE_URL = "https://docs.google.com/spreadsheets/d/1qGL7A7PB0PdJAzaAWGiPECn9eCFWwXWkFsiYD-WHjE4/edit?usp=sharing"
+GOOGLE_SHEET_GIDS = ["1383258709", "0"]  # Danh sách tất cả các trang (Tab 1: Thành viên/Bang, Tab 2: Nhật ký/Cập nhật)
 AUTO_SYNC_INTERVAL_SEC = 300  # Tự động cập nhật mỗi 5 phút (300 giây)
+
+
+def clean_text(text: Any) -> str:
+    """Làm sạch văn bản: bỏ thẻ HTML, xoay xở xuống dòng và khoảng trắng thừa."""
+    t = str(text or "")
+    t = re.sub(r"<[^>]+>", "", t)
+    return " ".join(t.split()).strip()
+
+
+def clean_header(h: Any) -> str:
+    """Tối ưu tên cột: lấy tiêu đề ngắn gọn (bỏ ghi chú ngoặc đơn hoặc xuống dòng)."""
+    t = str(h or "").split("\n")[0].strip()
+    t = re.sub(r"\(.*?\)", "", t).strip()
+    cleaned = clean_text(t)
+    return cleaned if cleaned else "Cột"
 
 
 class KnowledgeManager:
@@ -36,25 +54,37 @@ class KnowledgeManager:
         self.load_data()
 
     def sync_google_sheets(self, force: bool = False) -> bool:
-        """Tải dữ liệu mới nhất từ Google Sheets về knowledge.csv và data.csv."""
+        """Tải dữ liệu mới nhất từ Google Sheets (Tất cả các trang) về knowledge.csv và data.csv."""
         now = time.time()
         if not force and (now - self.last_sync_time) < AUTO_SYNC_INTERVAL_SEC and self.records:
             return True  # Vẫn còn mới, không cần tải lại
 
-        try:
-            req = urllib.request.Request(GOOGLE_SHEET_URL, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=10) as response:
-                content = response.read().decode("utf-8")
-                if len(content) > 50:
-                    with open("knowledge.csv", "w", encoding="utf-8") as f:
-                        f.write(content)
-                    with open("data.csv", "w", encoding="utf-8") as f:
-                        f.write(content)
-                    self.last_sync_time = now
-                    logger.info("🟢 Đã tự động đồng bộ dữ liệu mới nhất từ Google Sheets!")
-                    return True
-        except Exception as e:
-            logger.warning(f"⚠️ Không thể tải dữ liệu mới từ Google Sheets: {e}")
+        # Tách Spreadsheet ID từ URL chia sẻ
+        match = re.search(r"spreadsheets/d/([a-zA-Z0-9-_]+)", GOOGLE_SHEET_SHARE_URL)
+        sheet_id = match.group(1) if match else "1qGL7A7PB0PdJAzaAWGiPECn9eCFWwXWkFsiYD-WHjE4"
+
+        all_contents = []
+        for gid in GOOGLE_SHEET_GIDS:
+            csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+            try:
+                req = urllib.request.Request(csv_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    content = response.read().decode("utf-8")
+                    if len(content) > 30:
+                        all_contents.append(content.strip())
+            except Exception as e:
+                logger.warning(f"⚠️ Lỗi tải tab {gid} từ Google Sheets: {e}")
+
+        if all_contents:
+            merged_csv = "\n\n".join(all_contents)
+            with open("knowledge.csv", "w", encoding="utf-8") as f:
+                f.write(merged_csv)
+            with open("data.csv", "w", encoding="utf-8") as f:
+                f.write(merged_csv)
+            self.last_sync_time = now
+            logger.info(f"🟢 Đã tự động đồng bộ đầy đủ {len(all_contents)} trang dữ liệu từ Google Sheets!")
+            return True
+
         return False
 
     def load_data(self, force_sync: bool = False) -> None:
@@ -75,16 +105,24 @@ class KnowledgeManager:
                         sheet = wb.active
                         rows = list(sheet.iter_rows(values_only=True))
                         if rows and len(rows) > 1:
-                            headers = [str(h or f"col_{i}").strip() for i, h in enumerate(rows[0])]
-                            for r in rows[1:]:
-                                if any(r):
+                            header_idx = 0
+                            keywords = ['stt', 'tên game', 'tên zalo', 'game id', 'chức tiên quan', 'chức vụ bang']
+                            for idx, r in enumerate(rows[:10]):
+                                row_str_lower = [str(c or "").lower().strip() for c in r]
+                                match_count = sum(1 for kw in keywords if any(kw in cell for cell in row_str_lower))
+                                if match_count >= 2:
+                                    header_idx = idx
+                                    break
+
+                            headers = [clean_header(h) for h in rows[header_idx]]
+                            for r in rows[header_idx + 1:]:
+                                r_clean = [clean_text(c) for c in r]
+                                if any(r_clean):
                                     row_dict = {}
-                                    for i, val in enumerate(r):
-                                        if i < len(headers) and val is not None:
-                                            v_str = str(val).strip()
-                                            if v_str:
-                                                row_dict[headers[i]] = v_str
-                                    if row_dict:
+                                    for i, val in enumerate(r_clean):
+                                        if val and i < len(headers) and headers[i]:
+                                            row_dict[headers[i]] = val
+                                    if row_dict and any(k.lower() not in ['stt'] for k in row_dict.keys()):
                                         self.records.append(row_dict)
                             self.loaded_file = path
                             logger.info(f"📊 Đã nạp {len(self.records)} dòng dữ liệu từ Excel: {path}")
@@ -98,24 +136,27 @@ class KnowledgeManager:
                         all_rows = list(reader)
                         if len(all_rows) > 1:
                             header_idx = 0
-                            for idx, r in enumerate(all_rows):
-                                if any(c.strip() for c in r):
+                            keywords = ['stt', 'tên game', 'tên zalo', 'game id', 'chức tiên quan', 'chức vụ bang']
+                            for idx, r in enumerate(all_rows[:10]):
+                                row_str_lower = [str(c or "").lower().strip() for c in r]
+                                match_count = sum(1 for kw in keywords if any(kw in cell for cell in row_str_lower))
+                                if match_count >= 2:
                                     header_idx = idx
                                     break
-                            headers = [str(h or f"cột_{i}").strip() for i, h in enumerate(all_rows[header_idx])]
-                            
+
+                            headers = [clean_header(h) for h in all_rows[header_idx]]
                             for row in all_rows[header_idx + 1:]:
-                                if any(c.strip() for c in row):
+                                r_clean = [clean_text(c) for c in row]
+                                if any(r_clean):
                                     row_dict = {}
-                                    for i, val in enumerate(row):
-                                        val_str = str(val or "").strip()
-                                        if val_str and i < len(headers) and headers[i]:
-                                            row_dict[headers[i]] = val_str
-                                    if row_dict:
+                                    for i, val in enumerate(r_clean):
+                                        if val and i < len(headers) and headers[i]:
+                                            row_dict[headers[i]] = val
+                                    if row_dict and any(k.lower() not in ['stt'] for k in row_dict.keys()):
                                         self.records.append(row_dict)
                             
                             self.loaded_file = path
-                            logger.info(f"📊 Đã nạp {len(self.records)} dòng dữ liệu từ CSV: {path}")
+                            logger.info(f"📊 Đã nạp thành công {len(self.records)} dòng dữ liệu từ CSV/Excel: {path}")
                             return
 
             except Exception as e:
@@ -139,12 +180,13 @@ class KnowledgeManager:
                 return ""
 
         # Lọc các từ dừng vô nghĩa để tìm chính xác tên/Game ID/Zalo
-        stopwords = {"là", "gì", "ai", "cho", "hỏi", "xem", "tìm", "tra", "cứu", "của", "tôi", "em", "bot", "với", "được", "không", "nhỉ", "sao", "bao", "nhiêu", "thế", "nào"}
+        stopwords = {"là", "gì", "ai", "cho", "hỏi", "xem", "tìm", "tra", "cứu", "của", "tôi", "em", "bot", "với", "được", "không", "nhỉ", "sao", "bao", "nhiêu", "thế", "nào", "có"}
         raw_words = [w.strip().lower() for w in query.split() if len(w.strip()) > 1]
         query_words = [w for w in raw_words if w not in stopwords]
 
-        if not query_words:
-            return ""
+        # Kiểm tra nếu hỏi tổng quan về Excel / Google Sheets
+        query_lower = query.lower()
+        is_general_excel_query = any(k in query_lower for k in ["excel", "sheet", "dữ liệu", "thông tin", "danh sách", "bang", "thành viên", "mấy người", "bao nhiêu"])
 
         scored_records = []
         for record in self.records:
@@ -157,6 +199,13 @@ class KnowledgeManager:
                 scored_records.append((score, record))
 
         if not scored_records:
+            if is_general_excel_query and self.records:
+                # Nếu hỏi tổng quan về file Excel -> Trả về danh sách mẫu 4 nhân vật đầu tiên
+                formatted_info = [f"=== DỮ LIỆU EXCEL TỪ GOOGLE SHEETS (Tổng {len(self.records)} dòng) ==="]
+                for idx, item in enumerate(self.records[:4], 1):
+                    fields = [f"{k}: {v}" for k, v in item.items() if v and k.lower() not in ["stt", "gói"]]
+                    formatted_info.append(f"[{idx}] " + " | ".join(fields[:6]))
+                return "\n".join(formatted_info)
             return ""  # Không tìm thấy kết quả phù hợp -> Tốn 0 token bổ sung!
 
         scored_records.sort(key=lambda x: x[0], reverse=True)
