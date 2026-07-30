@@ -14,7 +14,6 @@ from groq import AsyncGroq, GroqError, RateLimitError, APIConnectionError, APISt
 
 import config
 from utils import logger
-from knowledge_manager import knowledge_manager
 
 
 class GroqAIClient:
@@ -40,13 +39,6 @@ class GroqAIClient:
         """
         if not self.client:
             raise ValueError("Chưa thiết lập GROQ_API_KEY. Vui lòng kiểm tra file .env.")
-
-        # Tra cứu dữ liệu từ file Excel / CSV nếu người dùng hỏi
-        last_user_msg = next((m["content"] for m in reversed(messages_history) if m.get("role") == "user"), "")
-        if last_user_msg:
-            excel_info = knowledge_manager.search_knowledge(last_user_msg)
-            if excel_info:
-                system_prompt += f"\n\n{excel_info}\nTrích dẫn dữ liệu trên nếu phù hợp với câu hỏi của tiểu hữu."
 
         # Xây dựng danh sách tin nhắn đầy đủ gồm System Prompt + Lịch sử hội thoại
         full_messages = [{"role": "system", "content": system_prompt}] + messages_history
